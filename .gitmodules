@@ -1,0 +1,3 @@
+[submodule "third_party/joint_kg_recommender"]
+	path = third_party/joint_kg_recommender
+	url = git@github.com:Panesher/joint-kg-recommender.git
