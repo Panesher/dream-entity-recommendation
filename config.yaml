@@ -1,0 +1,6 @@
+wikidata:
+    transe: trans_model_weight/transe_wikidata5m.pkl
+    dataset:
+        train: dataset/wikidata5m_transductive_train.txt
+        val: dataset/wikidata5m_transductive_valid.txt
+        test: dataset/wikidata5m_transductive_test.txt

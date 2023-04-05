@@ -3,162 +3,146 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable as V
 
-from third_party.joint_kg_recommender.jTransUP.utils.misc import to_gpu, projection_transH_pytorch
+from third_party.joint_kg_recommender.jTransUP.utils.misc import (
+    to_gpu,
+    projection_transH_pytorch,
+)
 
 
-class KTUPModel(nn.Module):
+def make_embedding(num_embeddings, embedding_dim, padding=False):
+    tensor = torch.FloatTensor(
+        num_embeddings - 1 if padding else num_embeddings, embedding_dim,
+    )
+
+    nn.init.xavier_uniform_(tensor)
+    norm_ent_weight = F.normalize(tensor, p=2, dim=1)
+    weight = nn.Parameter(
+        torch.cat([norm_ent_weight, torch.zeros(1, embedding_dim)], dim=0)
+        if padding
+        else norm_ent_weight,
+    )
+
+    embedding = nn.Embedding(
+        num_embeddings,
+        embedding_dim,
+        padding_idx=num_embeddings - 1 if padding else None,
+    )
+    embedding.weight = weight
+    embedding.weight.data = F.normalize(embedding.weight.data, p=2, dim=1)
+    return to_gpu(embedding)
+
+
+# TransH with added dependencies model
+class THWADModel(nn.Module):
     def __init__(
             self,
-            l1_flag,
+            item2entity,
             embedding_size,
-            user_total,
             item_total,
             entity_total,
             relation_total,
-            i_map,
-            new_map,
-            is_share,
-            use_st_gumbel,
+            prev_items_total,
+            l1_flag=False,
+            is_share=False,
+            use_st_gumbel=False,
     ):
         super().__init__()
         self.l1_flag = l1_flag
         self.is_share = is_share
         self.use_st_gumbel = use_st_gumbel
+
         self.embedding_size = embedding_size
-        self.user_total = user_total
         self.item_total = item_total
         # padding when item are not aligned with any entity
         self.ent_total = entity_total + 1
         self.rel_total = relation_total
-        self.is_pretrained = False
+
         # store item to item-entity dic
-        self.i_map = i_map
-        # store item-entity to (entity, item)
-        self.new_map = new_map
-        # transup
-        user_weight = torch.FloatTensor(self.user_total, self.embedding_size)
-        item_weight = torch.FloatTensor(self.item_total, self.embedding_size)
-        pref_weight = torch.FloatTensor(self.rel_total, self.embedding_size)
-        pref_norm_weight = torch.FloatTensor(
-            self.rel_total, self.embedding_size,
-        )
-        nn.init.xavier_uniform(user_weight)
-        nn.init.xavier_uniform(item_weight)
-        nn.init.xavier_uniform(pref_weight)
-        nn.init.xavier_uniform(pref_norm_weight)
-        # init user and item embeddings
-        self.user_embeddings = nn.Embedding(
-            self.user_total, self.embedding_size,
-        )
-        self.item_embeddings = nn.Embedding(
-            self.item_total, self.embedding_size,
-        )
-        self.user_embeddings.weight = nn.Parameter(user_weight)
-        self.item_embeddings.weight = nn.Parameter(item_weight)
-        normalize_user_emb = F.normalize(
-            self.user_embeddings.weight.data, p=2, dim=1,
-        )
-        normalize_item_emb = F.normalize(
-            self.item_embeddings.weight.data, p=2, dim=1,
-        )
-        self.user_embeddings.weight.data = normalize_user_emb
-        self.item_embeddings.weight.data = normalize_item_emb
-        # init preference parameters
-        self.pref_embeddings = nn.Embedding(
-            self.rel_total, self.embedding_size,
-        )
-        self.pref_norm_embeddings = nn.Embedding(
-            self.rel_total, self.embedding_size,
-        )
-        self.pref_embeddings.weight = nn.Parameter(pref_weight)
-        self.pref_norm_embeddings.weight = nn.Parameter(pref_norm_weight)
-        normalize_pref_emb = F.normalize(
-            self.pref_embeddings.weight.data, p=2, dim=1,
-        )
-        normalize_pref_norm_emb = F.normalize(
-            self.pref_norm_embeddings.weight.data, p=2, dim=1,
-        )
-        self.pref_embeddings.weight.data = normalize_pref_emb
-        self.pref_norm_embeddings.weight.data = normalize_pref_norm_emb
-
-        self.user_embeddings = to_gpu(self.user_embeddings)
-        self.item_embeddings = to_gpu(self.item_embeddings)
-        self.pref_embeddings = to_gpu(self.pref_embeddings)
-        self.pref_norm_embeddings = to_gpu(self.pref_norm_embeddings)
-
-        # transh
-        ent_weight = torch.FloatTensor(self.ent_total - 1, self.embedding_size)
-        rel_weight = torch.FloatTensor(self.rel_total, self.embedding_size)
-        norm_weight = torch.FloatTensor(self.rel_total, self.embedding_size)
-        nn.init.xavier_uniform(ent_weight)
-        nn.init.xavier_uniform(rel_weight)
-        nn.init.xavier_uniform(norm_weight)
-        norm_ent_weight = F.normalize(ent_weight, p=2, dim=1)
-        # init user and item embeddings
-        self.ent_embeddings = nn.Embedding(
-            self.ent_total,
-            self.embedding_size,
-            padding_idx=self.ent_total - 1,
-        )
-        self.rel_embeddings = nn.Embedding(self.rel_total, self.embedding_size)
-        self.norm_embeddings = nn.Embedding(
-            self.rel_total, self.embedding_size,
-        )
-
-        self.ent_embeddings.weight = nn.Parameter(
-            torch.cat(
-                [norm_ent_weight, torch.zeros(1, self.embedding_size)], dim=0,
-            ),
-        )
-        self.rel_embeddings.weight = nn.Parameter(rel_weight)
-        self.norm_embeddings.weight = nn.Parameter(norm_weight)
-
-        normalize_rel_emb = F.normalize(
-            self.rel_embeddings.weight.data, p=2, dim=1,
-        )
-        normalize_norm_emb = F.normalize(
-            self.norm_embeddings.weight.data, p=2, dim=1,
-        )
-
-        self.rel_embeddings.weight.data = normalize_rel_emb
-        self.norm_embeddings.weight.data = normalize_norm_emb
-
-        self.ent_embeddings = to_gpu(self.ent_embeddings)
-        self.rel_embeddings = to_gpu(self.rel_embeddings)
-        self.norm_embeddings = to_gpu(self.norm_embeddings)
-
-    def padding_items(self, i_ids, pad_index):
-        padded_e_ids = []
-        for i_id in i_ids:
-            new_index = self.i_map[i_id]
-            ent_id = self.new_map[new_index][0]
-            padded_e_ids.append(ent_id if ent_id != -1 else pad_index)
-        return padded_e_ids
-
-    def forward(self, ratings, triples, is_rec=True):
-
-        if is_rec and ratings is not None:
-            u_ids, i_ids = ratings
-
-            e_ids = self.padding_items(i_ids.data, self.ent_total - 1)
-            e_var = to_gpu(V(torch.LongTensor(e_ids)))
-
-            u_e = self.user_embeddings(u_ids)
-            i_e = self.item_embeddings(i_ids)
-            e_e = self.ent_embeddings(e_var)
-            ie_e = i_e + e_e
-
-            _, r_e, norm = self.get_preferences(
-                u_e, ie_e, use_st_gumbel=self.use_st_gumbel,
+        self.item2entity = item2entity
+        if isinstance(item2entity, dict):
+            self.entity2item = {v: k for k, v in item2entity.items()}
+        elif isinstance(item2entity, list):
+            self.entity2item = {v: k for k, v in enumerate(item2entity)}
+        else:
+            raise NotImplementedError(
+                f'item2entity should be dict or list: {type(item2entity)}',
             )
 
-            proj_u_e = projection_transH_pytorch(u_e, norm)
-            proj_i_e = projection_transH_pytorch(ie_e, norm)
+        # transup
+        # init item embeddings
+        self.item_embeddings = make_embedding(
+            self.item_total, self.embedding_size,
+        )
+        # init preference parameters
+        self.pref_embeddings = make_embedding(
+            self.rel_total, self.embedding_size,
+        )
+        self.pref_norm_embeddings = make_embedding(
+            self.rel_total, self.embedding_size,
+        )
+
+        # init transh
+        self.ent_embeddings = make_embedding(
+            self.ent_total, self.embedding_size,
+        )
+        self.rel_embeddings = make_embedding(
+            self.rel_total, self.embedding_size,
+        )
+        self.norm_embeddings = make_embedding(
+            self.rel_total, self.embedding_size,
+        )
+
+        # meaner
+        self.prev_meaner = to_gpu(
+            nn.Parameter(torch.ones(prev_items_total) / prev_items_total),
+        )
+
+    def get_entity(self, i_id):
+        return self.item2entity.get(i_id, self.ent_total - 1)
+
+    def get_item(self, e_id):
+        return self.entity2item.get(e_id, -1)
+
+    def padding_items(self, i_ids):
+        padded_e_ids = []
+        for i_id in i_ids:
+            padded_e_ids.append(self.get_entity(i_id))
+        return padded_e_ids
+
+    def get_multi_item_emb(self, ids):
+        return self.prev_meaner @ self.item_embeddings(ids)
+
+    def get_item_ent_emb(self, ids=None):
+        if ids is None:
+            ids = to_gpu(torch.asarray(self.item_total))
+
+        e_ids = self.padding_items(ids.data)
+        e_var = to_gpu(V(torch.LongTensor(e_ids)))
+
+        return self.item_embeddings(ids) + self.ent_embeddings(e_var)
+
+    def forward(self, ratings, triples, is_rec=True):
+        if is_rec and ratings is not None:
+            i_prevs, i_next = ratings
+
+            i_prevs_e = self.get_multi_item_emb(i_prevs)
+            i_next_e = self.get_item_ent_emb(i_next)
+
+            _, r_e, norm = self.get_preferences(
+                i_prevs_e, i_next_e, use_st_gumbel=self.use_st_gumbel,
+            )
+
+            proj_i_prev_e = projection_transH_pytorch(i_prevs_e, norm)
+            proj_i_next_e = projection_transH_pytorch(i_next_e, norm)
 
             if self.l1_flag:
-                score = torch.sum(torch.abs(proj_u_e + r_e - proj_i_e), 1)
+                score = torch.sum(
+                    torch.abs(proj_i_prev_e + r_e - proj_i_next_e), 1,
+                )
             else:
-                score = torch.sum((proj_u_e + r_e - proj_i_e) ** 2, 1)
+                score = torch.sum(
+                    (proj_i_prev_e + r_e - proj_i_next_e) ** 2, 1,
+                )
         elif not is_rec and triples is not None:
             h, t, r = triples
             h_e = self.ent_embeddings(h)
@@ -178,43 +162,33 @@ class KTUPModel(nn.Module):
 
         return score
 
-    def evaluate_rec(self, u_ids, all_i_ids=None):
-        batch_size = len(u_ids)
-        all_i = (
-            self.item_embeddings(all_i_ids)
-            if all_i_ids is not None and self.is_share
-            else self.item_embeddings.weight
-        )
-        item_total, dim = all_i.size()
+    def evaluate_rec(self, i_prev, all_i_ids=None):
+        batch_size = len(i_prev)
+        i_next_e = self.get_item_ent_emb(all_i_ids)
+        item_total, dim = i_next_e.size()
 
-        u = self.user_embeddings(u_ids)
+        i_prev_e = self.get_multi_item_emb(i_prev)
         # expand u and i to pair wise match, batch * item * dim
-        u_e = u.expand(item_total, batch_size, dim).permute(1, 0, 2)
-
-        i_e = all_i.expand(batch_size, item_total, dim)
-
-        e_ids = self.padding_items(
-            all_i_ids.data if all_i_ids is not None else self.i_map,
-            self.ent_total - 1,
+        i_prev_e = i_prev_e.expand(item_total, batch_size, dim).permute(
+            1, 0, 2,
         )
-        e_var = to_gpu(V(torch.LongTensor(e_ids)))
-        e_e = self.ent_embeddings(e_var).expand(batch_size, item_total, dim)
-
-        ie_e = i_e + e_e
+        i_next_e = i_next_e.expand(batch_size, item_total, dim)
 
         # batch * item * dim
         _, r_e, norm = self.get_preferences(
-            u_e, ie_e, use_st_gumbel=self.use_st_gumbel,
+            i_prev_e, i_next_e, use_st_gumbel=self.use_st_gumbel,
         )
 
-        proj_u_e = projection_transH_pytorch(u_e, norm)
-        proj_i_e = projection_transH_pytorch(ie_e, norm)
+        proj_i_prev_e = projection_transH_pytorch(i_next_e, norm)
+        proj_i_next_e = projection_transH_pytorch(i_next_e, norm)
 
         # batch * item
         if self.l1_flag:
-            score = torch.sum(torch.abs(proj_u_e + r_e - proj_i_e), 2)
+            score = torch.sum(
+                torch.abs(proj_i_prev_e + r_e - proj_i_next_e), 2,
+            )
         else:
-            score = torch.sum((proj_u_e + r_e - proj_i_e) ** 2, 2)
+            score = torch.sum((proj_i_prev_e + r_e - proj_i_next_e) ** 2, 2)
         return score
 
     def evaluate_head(self, t, r, all_e_ids=None):
@@ -375,18 +349,15 @@ class KTUPModel(nn.Module):
         y = (y_hard - y).detach() + y
         return y
 
-    def reportPreference(self, u_id, i_ids):
-        item_num = len(i_ids)
+    def report_preference(self, i_prevs, i_next_ids):
+        item_num = len(i_next_ids)
         # item * dim
-        u_e = self.user_embeddings(u_id.expand(item_num))
-        i_e = self.item_embeddings(i_ids)
+        i_prevs_e = self.get_multi_item_emb(i_prevs.expand(item_num))
+        i_next_e = self.get_item_ent_emb(i_next_ids)
 
-        e_ids = self.padding_items(i_ids.data, self.ent_total - 1)
-        e_var = to_gpu(V(torch.LongTensor(e_ids)))
-        e_e = self.ent_embeddings(e_var)
-        ie_e = i_e + e_e
-
-        return self.get_preferences(u_e, ie_e, use_st_gumbel=self.use_st_gumbel)
+        return self.get_preferences(
+            i_prevs_e, i_next_e, use_st_gumbel=self.use_st_gumbel,
+        )
 
     def disable_grad(self):
         for name, param in self.named_parameters():
@@ -395,3 +366,53 @@ class KTUPModel(nn.Module):
     def enable_grad(self):
         for name, param in self.named_parameters():
             param.requires_grad = True
+
+
+def load_model_from_transe(
+        transe, item_ids, additional_relations, **model_init_kwargs,
+) -> THWADModel:
+    _, embedding_size = transe.solver['entity_embeddings'].shape
+    relation_total, embedding_size_r = transe.solver[
+        'relation_embeddings'
+    ].shape
+    relation_total += len(additional_relations)
+    assert embedding_size == embedding_size_r
+    item_total = len(item_ids)
+    item2entity = {
+        item_id: transe.graph.entity2id[item]
+        for item_id, item in enumerate(item_ids)
+    }
+    model = THWADModel(
+        item2entity=item2entity,
+        embedding_size=embedding_size,
+        item_total=item_total,
+        entity_total=1,  # for fast preload
+        relation_total=relation_total,
+        **model_init_kwargs,
+    )
+    model.ent_total = transe.solver.entity_embeddings.shape[0] + 1
+    model.ent_embeddings = to_gpu(
+        nn.Embedding.from_pretrained(
+            torch.cat(
+                [
+                    torch.tensor(transe.solver.entity_embeddings),
+                    torch.zeros(1, model.embedding_size),
+                ],
+                dim=0,
+            ),
+        ),
+    )
+    model.rel_embeddings = to_gpu(
+        nn.Embedding.from_pretrained(
+            torch.cat(
+                [
+                    torch.tensor(transe.solver.relation_embeddings),
+                    torch.zeros(
+                        len(additional_relations), model.embedding_size,
+                    ),
+                ],
+                dim=0,
+            ),
+        ),
+    )
+    return model
