@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable as V
+from pathlib import Path
 
 from third_party.joint_kg_recommender.jTransUP.utils.misc import (
     to_gpu,
@@ -108,6 +109,28 @@ class THWADModel(nn.Module):
         self.prev_meaner = to_gpu(
             nn.Parameter(torch.ones(prev_items_total) / prev_items_total),
         )
+
+    def save(self, model_path):
+        save_dir = Path(model_path)
+        save_dir.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            'model': self.state_dict(),
+            'item2entity': self.item2entity,
+            'id2entity': self.id2entity,
+            'entity2id': self.entity2id,
+            'rel2id': self.rel2id,
+            'id2rel': self.id2rel,
+        }, model_path)
+
+    def load(self, model_path):
+        model_path = Path(model_path)
+        checkpoint = torch.load(model_path)
+        self.load_state_dict(checkpoint['model'])
+        self.item2entity = checkpoint['item2entity']
+        self.id2entity = checkpoint['id2entity']
+        self.entity2id = checkpoint['entity2id']
+        self.rel2id = checkpoint['rel2id']
+        self.id2rel = checkpoint['id2rel']
 
     def get_items_name(self, i_ids):
         return [self.id2entity[i_id] for i_id in i_ids]

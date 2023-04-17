@@ -30,7 +30,7 @@ class BaseTrainer(object):
             val_data_loader: DataLoader,
             test_data_loader: DataLoader,
             log_interval: int = 5,
-            save_interval: int = 100,
+            save_interval: int = 10,
             save_path: str = 'model_checkpoints',
             verbose: bool = True,
     ):
@@ -62,16 +62,15 @@ class BaseTrainer(object):
                 wandb.log({'train': loss_dict})
 
     def save_model(self, epoch):
-        self.save_path.mkdir(parents=True, exist_ok=True)
-        torch.save(
-            self.model.state_dict(), self.save_path / f'model_{epoch}.pt',
-        )
+        self.model.save(self.save_path / f'model.pt')
 
     def train(self, epochs):
         for epoch in range(epochs):
             self.train_epoch(self.train_data_loader)
-            if self.save_path and epoch % self.save_interval == 0:
+            if self.save_path and epoch % self.save_interval == self.save_interval - 1:
                 self.save_model(epoch)
+
+        self.save_model(epochs)
 
     def _mean_metrics(self, losses_list_dict):
         mean_loss = {}
@@ -88,7 +87,6 @@ class BaseTrainer(object):
 
         return loss_dict
 
-    @torch.no_grad()
     def _test_step(self, batch_idx, batch):
         raise NotImplementedError
 
