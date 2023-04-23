@@ -124,8 +124,13 @@ class THWADModel(nn.Module):
 
     def load(self, model_path):
         model_path = Path(model_path)
-        checkpoint = torch.load(model_path)
+
+        # load to cpu because gpu probably contains less memory
+        checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
+        self = self.cpu()
         self.load_state_dict(checkpoint['model'])
+        to_gpu(self)
+
         self.item2entity = checkpoint['item2entity']
         self.id2entity = checkpoint['id2entity']
         self.entity2id = checkpoint['entity2id']
