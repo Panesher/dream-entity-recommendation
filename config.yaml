@@ -12,9 +12,9 @@ wikidata:
 dataset:
     name: daily_dialog
     limit:
-        train: 2000
-        validation: 200
-        test: 200
+        train: -1
+        validation: -1
+        test: -1
     postprocess:
         train: dataset/el_single_results_train.json
         val: dataset/el_single_results_validation.json

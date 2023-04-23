@@ -191,7 +191,7 @@ if __name__ == '__main__':
         # ed_results = preprocess_entity_detection(sentences)
         # with open(f"data/ed_results_{name}.json", "w") as f:
         #     json.dump(ed_results, f)
-        #
+        
         # el_results = preprocess_entity_linking(ed_results)
         # with open(f"data/el_results_{name}.json", "w") as f:
         #     json.dump(el_results, f)
