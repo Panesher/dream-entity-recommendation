@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import numpy as np
 from torch.utils.data import DataLoader
 from model_utils.thswad import THWADModel, to_gpu
 import wandb
@@ -7,6 +8,10 @@ from torch.autograd import Variable as V
 from tqdm import tqdm
 from pathlib import Path
 import third_party.joint_kg_recommender.jTransUP.utils.loss as loss
+import logging
+
+LOGGER = logging.getLogger('trainer_logger')
+logging.basicConfig(level=logging.INFO)
 
 
 def rec_to_gpu(value):
@@ -26,32 +31,24 @@ class BaseTrainer(object):
             model: THWADModel,
             optimizer: torch.optim.Optimizer,
             scheduler,
-            train_data_loader: DataLoader,
-            val_data_loader: DataLoader,
-            test_data_loader: DataLoader,
             log_interval: int = 5,
-            save_interval: int = 10,
             save_path: str = 'model_checkpoints',
             verbose: bool = True,
     ):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.train_data_loader = train_data_loader
-        self.val_data_loader = val_data_loader
-        self.test_data_loader = test_data_loader
         self.log_interval = log_interval
-        self.save_interval = save_interval
         self.save_path = Path(save_path)
         self.verbose = verbose
 
     def _train_step(self, batch_idx, batch):
         raise NotImplementedError
 
-    def train_epoch(self, dataloader):
+    def train_epoch(self, dataloader, epoch=0):
         self.model.train()
         for batch_idx, batch in enumerate(
-                tqdm(dataloader, total=len(dataloader), desc='Training'),
+                tqdm(dataloader, total=len(dataloader), desc=f'Training {epoch}'),
         ):
             self.optimizer.zero_grad()
             batch = rec_to_gpu(batch)
@@ -61,21 +58,29 @@ class BaseTrainer(object):
             if self.verbose and batch_idx % self.log_interval == 0:
                 wandb.log({'train': loss_dict})
 
-    def save_model(self, epoch):
-        self.model.save(self.save_path / f'model.pt')
+    def save_model(self, path_postfix):
+        self.model.save(self.save_path / f'model_{path_postfix}.pt')
 
-    def train(self, epochs):
+    def train(self, train_dataloader, epochs, val_dataloader=None):
+        best_metric = {}
         for epoch in range(epochs):
-            self.train_epoch(self.train_data_loader)
-            if self.save_path and epoch % self.save_interval == self.save_interval - 1:
-                self.save_model(epoch)
+            self.train_epoch(train_dataloader, epoch)
+            if val_dataloader is not None:
+                metric = self.test(val_dataloader)
+                if self.is_first_metric_better(metric, best_metric):
+                    self.save_model('best')
+                    best_metric = metric
+                if self.should_early_stop(metric):
+                    LOGGER.info(f'stopping at epoch: {epoch} with metrics: {metric}')
+                    break
 
-        self.save_model(epochs)
+        self.save_model('last')
+        return best_metric
 
     def _mean_metrics(self, losses_list_dict):
         mean_loss = {}
         for loss_name, loss_values in losses_list_dict.items():
-            mean_loss[loss_name] = torch.mean(torch.stack(loss_values))
+            mean_loss[loss_name] = torch.mean(torch.stack(loss_values)).item()
 
         return mean_loss
 
@@ -88,6 +93,12 @@ class BaseTrainer(object):
         return loss_dict
 
     def _test_step(self, batch_idx, batch):
+        raise NotImplementedError
+
+    def is_first_metric_better(self, metric, other_metric):
+        raise NotImplementedError
+
+    def should_early_stop(self, metric):
         raise NotImplementedError
 
     @torch.no_grad()
@@ -104,17 +115,23 @@ class BaseTrainer(object):
         mean_loss = self._mean_metrics(mean_loss)
         if self.verbose:
             wandb.log({'test': mean_loss})
+
         return mean_loss
 
 
 class THSWADTrainer(BaseTrainer):
-    def __init__(self, margin, norm_lambda, clipping_max_value, model_target, kg_lambda, *args, **kwargs):
+    def __init__(self, margin, norm_lambda, clipping_max_value, model_target, kg_lambda, metric_tolerance, eraly_stopping, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.kg_lambda = kg_lambda
         self.model_target = model_target
         self.clipping_max_value = clipping_max_value
         self.norm_lambda = norm_lambda
         self.margin = margin
+
+        self.prev_metric = {}
+        self.cnt_no_change_metric = 0
+        self.metric_tolerance = metric_tolerance
+        self.eraly_stopping = eraly_stopping
 
         self.rec_total_loss = 0
         self.kg_total_loss = 0
@@ -170,18 +187,61 @@ class THSWADTrainer(BaseTrainer):
             self.rec_total_loss += losses.item()
         else:
             self.kg_total_loss += losses.item()
+        return {
+            'rec_total_loss': self.rec_total_loss / (batch_idx // 2 + 1),
+            'kg_total_loss': self.kg_total_loss / (batch_idx // 2 + 1),
+        }
+
+    def is_first_metric_better(self, metric, other_metric):
+        if 'map@10' not in metric:
+            return False
+        if 'map@10' not in other_metric:
+            return True
+
+        return metric['map@10'] > other_metric['map@10']
+
+    def should_early_stop(self, metric):
+        if not self.prev_metric:
+            self.prev_metric = metric
+            return False
+
+        for key, value in metric.items():
+            if np.abs(value - self.prev_metric[key]) > self.metric_tolerance:
+                LOGGER.info(f'Metric {key} has significant difference')
+                self.prev_metric = metric
+                self.cnt_no_change_metric = 0
+                return False
+
+        self.cnt_no_change_metric += 1
+        return self.eraly_stopping <= self.cnt_no_change_metric
+
+    def train_epoch(self, dataloader, epoch=0):
+        self.rec_total_loss = 0
+        self.kg_total_loss = 0
+        super().train_epoch(dataloader, epoch)
+        if self.verbose:
+            wandb.log({'train': {
+                'epoch': epoch,
+                'rec_total_loss_final': self.rec_total_loss / len(dataloader),
+                'kg_total_loss_final': self.kg_total_loss / len(dataloader),
+            }})
 
     def _test_step(self, batch_idx, batch):
         if batch['is_rec']:
             prevs, next_items = batch['ratings']
             score = self.model.evaluate_rec(prevs)
+
+            topk_idxs = torch.topk(score, 5, dim=1)[1].permute(1, 0)
+            map_5_score = (topk_idxs == next_items).any(0).float().mean()
+
+            topk_idxs = torch.topk(score, 10, dim=1)[1].permute(1, 0)
+            map_10_score = (topk_idxs == next_items).any(0).float().mean()
+
             accuracy = (score.argmax(dim=1) == next_items).float().mean()
-            return {'accuracy': accuracy}
+
+            return {
+                'accuracy': accuracy,
+                'map@5': map_5_score,
+                'map@10': map_10_score,
+            }
         return {}
-        # else:
-        #     h, r, t = batch['triplets']
-        #     head_score = self.model.evaluate_head(t, r)
-        #     tail_score = self.model.evaluate_tail(h, r)
-        #     head_accuracy = (head_score.argmax(dim=1) == h).float().mean()
-        #     tail_accuracy = (tail_score.argmax(dim=1) == t).float().mean()
-        #     return {'head_accuracy': head_accuracy, 'tail_accuracy': tail_accuracy}

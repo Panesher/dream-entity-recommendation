@@ -72,9 +72,12 @@ class DialogDataset(Dataset):
                 for tgt in messages[i]:
                     if item2id is not None:
                         tgt = item2id.get(tgt, pad_item)
+                    if tgt == pad_item:
+                        continue
 
                     self.data.append(prev)
                     self.targets.append(tgt)
+                    prev = np.append(prev[1:], tgt)
 
     def __len__(self):
         return len(self.data)
