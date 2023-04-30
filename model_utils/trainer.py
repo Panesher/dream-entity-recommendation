@@ -102,11 +102,11 @@ class BaseTrainer(object):
         raise NotImplementedError
 
     @torch.no_grad()
-    def test(self, dataloader):
+    def test(self, dataloader, name='val'):
         self.model.eval()
         mean_loss = {}
         for batch_idx, batch in enumerate(
-                tqdm(dataloader, total=len(dataloader), desc='Validating'),
+                tqdm(dataloader, total=len(dataloader), desc=name),
         ):
             batch = rec_to_gpu(batch)
             loss_dict = self._test_step(batch_idx, batch)
@@ -114,7 +114,7 @@ class BaseTrainer(object):
 
         mean_loss = self._mean_metrics(mean_loss)
         if self.verbose:
-            wandb.log({'test': mean_loss})
+            wandb.log({name: mean_loss})
 
         return mean_loss
 
@@ -132,9 +132,13 @@ class THSWADTrainer(BaseTrainer):
         self.cnt_no_change_metric = 0
         self.metric_tolerance = metric_tolerance
         self.eraly_stopping = eraly_stopping
+        self._reset_loss()
 
-        self.rec_total_loss = 0
-        self.kg_total_loss = 0
+    def _reset_loss(self):
+        self.rec_total_loss = 0.
+        self.kg_total_loss = 0.
+        self.rec_total_cnt = 0
+        self.kg_total_cnt = 0
 
     def _make_negative_rating(self, next_items):
         return to_gpu(torch.randint(0, len(self.model.item2entity), (len(next_items),)))
@@ -145,20 +149,25 @@ class THSWADTrainer(BaseTrainer):
         tails[~mask] = to_gpu(torch.randint(0, len(self.model.entity2id), (len(tails[~mask]),)))
         return heads, tails
 
+    def _step_rec(self, batch):
+        assert batch['is_rec']
+        prevs, next_items = batch['ratings']
+        neg_items = self._make_negative_rating(next_items)
+
+        # Run model. output: batch_size * cand_num, input: ratings, triples, is_rec=True
+        pos_score = self.model((prevs, next_items), None, is_rec=True)
+        neg_score = self.model((prevs, neg_items), None, is_rec=True)
+
+        # Calculate loss.
+        losses = loss.bprLoss(pos_score, neg_score, target=self.model_target)
+        losses += loss.orthogonalLoss(self.model.pref_embeddings.weight, self.model.pref_norm_embeddings.weight)
+        return losses
+
     def _train_step(self, batch_idx, batch):
         if batch['is_rec']:
-            prevs, next_items = batch['ratings']
-            neg_items = self._make_negative_rating(next_items)
-
-            # Run model. output: batch_size * cand_num, input: ratings, triples, is_rec=True
-            pos_score = self.model((prevs, next_items), None, is_rec=True)
-            neg_score = self.model((prevs, neg_items), None, is_rec=True)
-
-            # Calculate loss.
-            losses = loss.bprLoss(pos_score, neg_score, target=self.model_target)
-            losses += loss.orthogonalLoss(self.model.pref_embeddings.weight, self.model.pref_norm_embeddings.weight)
-        # kg train
+            losses = self._step_rec(batch)
         else:
+            # kg train
             h, r, t = batch['triplets']
             nh, nt = self._make_negative_triple(h, t)
 
@@ -185,11 +194,13 @@ class THSWADTrainer(BaseTrainer):
 
         if batch['is_rec']:
             self.rec_total_loss += losses.item()
+            self.rec_total_cnt += 1
         else:
             self.kg_total_loss += losses.item()
+            self.kg_total_loss += 1
         return {
-            'rec_total_loss': self.rec_total_loss / (batch_idx // 2 + 1),
-            'kg_total_loss': self.kg_total_loss / (batch_idx // 2 + 1),
+            'rec_total_loss': self.rec_total_loss / max(self.rec_total_cnt, 1),
+            'kg_total_loss': self.kg_total_loss / max(self.kg_total_cnt, 1),
         }
 
     def is_first_metric_better(self, metric, other_metric):
@@ -216,14 +227,13 @@ class THSWADTrainer(BaseTrainer):
         return self.eraly_stopping <= self.cnt_no_change_metric
 
     def train_epoch(self, dataloader, epoch=0):
-        self.rec_total_loss = 0
-        self.kg_total_loss = 0
+        self._reset_loss()
         super().train_epoch(dataloader, epoch)
         if self.verbose:
             wandb.log({'train': {
                 'epoch': epoch,
-                'rec_total_loss_final': self.rec_total_loss / len(dataloader),
-                'kg_total_loss_final': self.kg_total_loss / len(dataloader),
+                'rec_total_loss_final': self.rec_total_loss / max(self.rec_total_cnt, 1),
+                'kg_total_loss_final': self.kg_total_loss / max(self.kg_total_cnt, 1),
             }})
 
     def _test_step(self, batch_idx, batch):
@@ -239,9 +249,12 @@ class THSWADTrainer(BaseTrainer):
 
             accuracy = (score.argmax(dim=1) == next_items).float().mean()
 
+            loss = self._step_rec(batch)
+
             return {
                 'accuracy': accuracy,
                 'map@5': map_5_score,
                 'map@10': map_10_score,
+                'val_loss': loss,
             }
         return {}
