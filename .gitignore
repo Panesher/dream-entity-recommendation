@@ -130,3 +130,5 @@ dmypy.json
 dataset/
 model_checkpoints/
 wandb/
+_*.py
+_*.ipynb

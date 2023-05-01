@@ -197,7 +197,7 @@ class THSWADTrainer(BaseTrainer):
             self.rec_total_cnt += 1
         else:
             self.kg_total_loss += losses.item()
-            self.kg_total_loss += 1
+            self.kg_total_cnt += 1
         return {
             'rec_total_loss': self.rec_total_loss / max(self.rec_total_cnt, 1),
             'kg_total_loss': self.kg_total_loss / max(self.kg_total_cnt, 1),

@@ -10,7 +10,7 @@ import wandb
 
 wandb.init(
     project="dream-entiry-recommendation", 
-    name=f'Run with val loss',
+    name=f'Fix get_multi_item_emb',
     config={
         'margin': .5,
         'norm_lambda': .2,
@@ -83,7 +83,7 @@ train_loader = make_dataloader(el_single_results, load_wiki_dataset(config['wiki
 print('dataset loaded')
 
 opt = torch.optim.Adam(model.parameters(), lr=wandb.config['lr'])
-scheduler = get_epoch_lr(opt, len(train_loader), wandb.config['max_epochs'], start_value=wandb.config['lr'])
+scheduler = get_epoch_lr(opt, len(train_loader) / 10, wandb.config['max_epochs'] * 10, start_value=wandb.config['lr'])
 
 trainer = THSWADTrainer(
     margin=wandb.config['margin'],

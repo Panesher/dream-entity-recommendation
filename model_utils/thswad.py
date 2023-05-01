@@ -74,6 +74,9 @@ class THWADModel(nn.Module):
         # store item to item-entity dic
         self.item2entity = item2entity
         self.entity2item = reverse_dict(item2entity)
+        item2entity_list = list(item2entity.values())
+        item2entity_list.append(entity_total) # padding
+        self.item2entity_torch = to_gpu(torch.LongTensor(item2entity_list))
 
         self.id2entity = id2entity
         self.entity2id = reverse_dict(id2entity)
@@ -147,22 +150,20 @@ class THWADModel(nn.Module):
         return self.entity2item.get(e_id, self.item_total - 1)
 
     def padding_items(self, i_ids):
-        padded_e_ids = []
-        for i_id in i_ids:
-            padded_e_ids.append(self.get_entity(i_id))
-        return padded_e_ids
+        return self.item2entity_torch[torch.clip(i_ids, 0, len(self.item2entity_torch - 1))]
 
     def get_multi_item_emb(self, ids):
-        return self.prev_meaner @ self.item_embeddings(ids)
+        e_ids = self.padding_items(ids)
+
+        return self.prev_meaner @ (self.item_embeddings(ids) + self.ent_embeddings(e_ids))
 
     def get_item_ent_emb(self, ids=None):
         if ids is None:
             ids = to_gpu(torch.arange(self.item_total))
 
         e_ids = self.padding_items(ids.data)
-        e_var = to_gpu(V(torch.LongTensor(e_ids)))
 
-        return self.item_embeddings(ids) + self.ent_embeddings(e_var)
+        return self.item_embeddings(ids) + self.ent_embeddings(e_ids)
 
     def forward(self, ratings, triples, is_rec=True):
         if is_rec and ratings is not None:
