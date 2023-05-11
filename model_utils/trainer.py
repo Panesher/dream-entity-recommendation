@@ -217,7 +217,7 @@ class THSWADTrainer(BaseTrainer):
             return False
 
         for key, value in metric.items():
-            if np.abs(value - self.prev_metric[key]) > self.metric_tolerance:
+            if value > self.metric_tolerance + self.prev_metric[key]:
                 LOGGER.info(f'Metric {key} has significant difference')
                 self.prev_metric = metric
                 self.cnt_no_change_metric = 0

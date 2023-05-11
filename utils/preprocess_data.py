@@ -6,6 +6,7 @@ from tqdm import tqdm
 import pickle
 import numpy as np
 from pathlib import Path
+from sklearn.model_selection import train_test_split
 
 
 with open('config.yaml') as f:
@@ -13,11 +14,25 @@ with open('config.yaml') as f:
 
 
 def download_dataset():
-    ds = load_dataset(config['dataset']['name'])
-    return ds
+    ds_name_or_path = config['dataset']['name']
+    if Path(ds_name_or_path).exists():
+        with open(ds_name_or_path, 'r') as f:
+            ds = json.load(f)
+        train, val = train_test_split(ds, train_size=0.8, random_state=42)
+        val, test = train_test_split(val, train_size=0.5, random_state=42)
+        return {
+            'train': train,
+            'validation': val,
+            'test': test,
+        }
+
+    return load_dataset(config['dataset']['name'])
 
 
 def extract_sentences(ds):
+    if isinstance(ds, list) and isinstance(ds[0], list) and isinstance(ds[0][0], str):
+        return ds
+
     sentences = []
     for data in ds:
         dialog = []
@@ -86,6 +101,7 @@ def preprocess_entity_linking(ed_results):
                 dialog_result += [[]]
                 continue
             try:
+                message['context'] = [message['context']]
                 el = requests.post(url, json=message).json()
                 for entity in el[0]:
                     if entity['entity_ids'] == ['not in wiki']:
@@ -185,21 +201,23 @@ if __name__ == '__main__':
     dataset = download_dataset()
     entity2id, _ = get_needed_embedings()
 
+    postprocess_dir = Path(config['dataset']['postprocess']['train']).parent
     for name, value in dataset.items():
-        # TODO: delete limit of sentences
         # sentences = extract_sentences(value)[:config['dataset']['limit'][name]]
         # ed_results = preprocess_entity_detection(sentences)
-        # with open(f"data/ed_results_{name}.json", "w") as f:
+        # with open(postprocess_dir / f"ed_results_{name}.json", "w") as f:
         #     json.dump(ed_results, f)
-        
-        # el_results = preprocess_entity_linking(ed_results)
-        # with open(f"data/el_results_{name}.json", "w") as f:
-        #     json.dump(el_results, f)
 
-        with open(f'dataset/el_results_{name}.json', 'r') as f:
-            el_results = json.load(f)
+        with open(postprocess_dir / f"ed_results_{name}.json", "r") as f:
+            ed_results = json.load(f)
+        el_results = preprocess_entity_linking(ed_results)
+        with open(postprocess_dir / f"el_results_{name}.json", "w") as f:
+            json.dump(el_results, f)
+
+        # with open(postprocess_dir / f'el_results_{name}.json', 'r') as f:
+        #     el_results = json.load(f)
         el_single_results = get_el_results(el_results, entity2id)
-        with open(f'dataset/el_single_results_{name}.json', 'w') as f:
+        with open(postprocess_dir / f'el_single_results_{name}.json', 'w') as f:
             json.dump(el_single_results, f)
 
         # wikidata_encoder_name = Path(config['wikidata']['encoder']).stem.split('_')[0]

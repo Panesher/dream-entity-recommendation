@@ -413,7 +413,7 @@ class THWADModel(nn.Module):
 
 
 def load_model_from_transe(
-        transe, item_ids, add_rel_cnt=1, **model_init_kwargs,
+        transe, item_ids, add_rel_cnt=1, pretrained=True, **model_init_kwargs,
 ) -> THWADModel:
     _, embedding_size = transe.solver['entity_embeddings'].shape
     relation_total, embedding_size_r = transe.solver[
@@ -436,6 +436,8 @@ def load_model_from_transe(
         relation_total=relation_total,
         **model_init_kwargs,
     )
+    if not pretrained:
+        return model
     model.ent_total = transe.solver.entity_embeddings.shape[0] + 1
     model.ent_embeddings = to_gpu(
         nn.Embedding.from_pretrained(
