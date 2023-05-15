@@ -183,7 +183,7 @@ class THSWADTrainer(BaseTrainer):
             norm_embeddings = self.model.norm_embeddings(r) * 2
             losses += loss.orthogonalLoss(rel_embeddings, norm_embeddings)
 
-            losses = losses + loss.normLoss(ent_embeddings) + loss.normLoss(rel_embeddings)
+            losses = losses + self.norm_lambda * (loss.normLoss(ent_embeddings) + loss.normLoss(rel_embeddings))
             losses = self.kg_lambda * losses
 
         # Backward pass.

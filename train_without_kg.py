@@ -10,23 +10,22 @@ import wandb
 
 wandb.init(
     project="dream-entiry-recommendation", 
-    name=f'Topical-Chat',
+    name=f'without kg',
     config={
         'margin': .5,
-        'norm_lambda': 1.,
+        'norm_lambda': .1,
         'clipping_max_value': 5.,
-        'model_target': .5,
+        'model_target': 1.,
         'kg_lambda': .1,
-        'train_batch_size': 256,
+        'train_batch_size': 64,
         'val_batch_size': 2,
-        'max_epochs': 15,
+        'max_epochs': 300,
         'metric_tolerance': .005,
         'eraly_stopping': 10,
         'lr': .01,
         'prev_count': 5,
         'use_st_gumbel': False,
         'l1_flag': True,
-        'dataset': config['dataset']['postprocess']['train'],
     },
 )
 
@@ -53,15 +52,12 @@ id2items = list(items2id.keys())
 
 
 def make_dataloader(el_single_res, wikidata_ds, items2id=items2id, batch_size=BS, shuffle=True):
-    if el_single_res:
-        ds = DialogDataset(el_single_res['entity_ids'], len(items2id), PREV_CNT, items2id)
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
-    else:
-        dl = DataLoader([], batch_size=batch_size, shuffle=False)
-    if wikidata_ds:
+    ds = DialogDataset(el_single_res['entity_ids'], len(items2id), PREV_CNT, items2id)
+    dl = DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
+    if len(wikidata_ds):
         wdl = DataLoader(wikidata_ds, batch_size=batch_size, shuffle=shuffle)
     else:
-        wdl = DataLoader([], batch_size=batch_size, shuffle=False)
+        wdl = DataLoader(wikidata_ds, batch_size=batch_size, shuffle=False)
     return TSHWADLoader(wdl, dl)
 
 
@@ -86,7 +82,7 @@ model, graph = optimized_transe_load()
 
 print('model loaded')
 
-train_loader = make_dataloader(el_single_results, load_wiki_dataset(config['wikidata']['dataset']['train'], graph))
+train_loader = make_dataloader(el_single_results, []) # load_wiki_dataset(config['wikidata']['dataset']['train'], graph))
 print('dataset loaded')
 
 opt = torch.optim.Adam(model.parameters(), lr=wandb.config['lr'])
@@ -105,6 +101,9 @@ trainer = THSWADTrainer(
     eraly_stopping=wandb.config['eraly_stopping'],
     verbose=True,
 )
+def do_nothing(*args, **kwargs):
+    pass
+trainer.save_model = do_nothing
 
 print('start training')
 trainer.train(train_loader, wandb.config['max_epochs'], val_dataloader=val_loader)

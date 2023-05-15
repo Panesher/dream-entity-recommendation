@@ -15,7 +15,7 @@ with open('config.yaml') as f:
 
 def download_dataset():
     ds_name_or_path = config['dataset']['name']
-    if Path(ds_name_or_path).exists():
+    if Path(ds_name_or_path).exists() and 'dream' in str(ds_name_or_path).lower():
         with open(ds_name_or_path, 'r') as f:
             ds = json.load(f)
         train, val = train_test_split(ds, train_size=0.8, random_state=42)
@@ -25,14 +25,24 @@ def download_dataset():
             'validation': val,
             'test': test,
         }
+    elif Path(ds_name_or_path).exists() and 'topical' in str(ds_name_or_path).lower():
+        ds_name_or_path = Path(ds_name_or_path)
+        with open(ds_name_or_path / 'train.json', 'r') as f:
+            train = json.load(f)
+        with open(ds_name_or_path / 'test.json', 'r') as f:
+            test = json.load(f)
+        with open(ds_name_or_path / 'valid.json', 'r') as f:
+            val = json.load(f)
+        return {
+            'train': train,
+            'validation': val,
+            'test': test,
+        }
 
     return load_dataset(config['dataset']['name'])
 
 
-def extract_sentences(ds):
-    if isinstance(ds, list) and isinstance(ds[0], list) and isinstance(ds[0][0], str):
-        return ds
-
+def extract_sentences_daily_dialog(ds):
     sentences = []
     for data in ds:
         dialog = []
@@ -41,6 +51,28 @@ def extract_sentences(ds):
         if dialog:
             sentences += [dialog]
     return sentences
+
+
+def extract_sentences_topical_chat(ds):
+    sentences = []
+    for _, v in ds.items():
+        dialog = []
+        for message_wrapped in v['content']:
+            dialog += [message_wrapped['message'].lower().strip()]
+        if dialog:
+            sentences += [dialog]
+    return sentences
+
+
+def extract_sentences(ds):
+    if isinstance(ds, list) and isinstance(ds[0], list) and isinstance(ds[0][0], str):
+        return ds
+    if isinstance(ds, dict):
+        for k in ds:
+            if 'content' in ds[k]:
+                return extract_sentences_topical_chat(ds)
+            break
+    return extract_sentences_daily_dialog(ds)
 
 
 def transform_ed2el(message, ed_res):
@@ -203,10 +235,10 @@ if __name__ == '__main__':
 
     postprocess_dir = Path(config['dataset']['postprocess']['train']).parent
     for name, value in dataset.items():
-        # sentences = extract_sentences(value)[:config['dataset']['limit'][name]]
-        # ed_results = preprocess_entity_detection(sentences)
-        # with open(postprocess_dir / f"ed_results_{name}.json", "w") as f:
-        #     json.dump(ed_results, f)
+        sentences = extract_sentences(value)[:config['dataset']['limit'][name]]
+        ed_results = preprocess_entity_detection(sentences)
+        with open(postprocess_dir / f"ed_results_{name}.json", "w") as f:
+            json.dump(ed_results, f)
 
         with open(postprocess_dir / f"ed_results_{name}.json", "r") as f:
             ed_results = json.load(f)
@@ -214,8 +246,8 @@ if __name__ == '__main__':
         with open(postprocess_dir / f"el_results_{name}.json", "w") as f:
             json.dump(el_results, f)
 
-        # with open(postprocess_dir / f'el_results_{name}.json', 'r') as f:
-        #     el_results = json.load(f)
+        with open(postprocess_dir / f'el_results_{name}.json', 'r') as f:
+            el_results = json.load(f)
         el_single_results = get_el_results(el_results, entity2id)
         with open(postprocess_dir / f'el_single_results_{name}.json', 'w') as f:
             json.dump(el_single_results, f)
