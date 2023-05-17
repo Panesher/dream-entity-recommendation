@@ -127,7 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-dataset/
+
+dataset/_extra_data*
+dataset/wikidata5m*
 model_checkpoints/
 wandb/
 _*.py
