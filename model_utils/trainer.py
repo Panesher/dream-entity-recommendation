@@ -249,12 +249,12 @@ class THSWADTrainer(BaseTrainer):
 
             accuracy = (score.argmax(dim=1) == next_items).float().mean()
 
-            loss = self._step_rec(batch)
+            # loss = self._step_rec(batch)
 
             return {
                 'accuracy': accuracy,
                 'map@5': map_5_score,
                 'map@10': map_10_score,
-                'val_loss': loss,
+                # 'val_loss': loss,
             }
         return {}

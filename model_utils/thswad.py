@@ -150,7 +150,7 @@ class THWADModel(nn.Module):
         return self.entity2item.get(e_id, self.item_total - 1)
 
     def padding_items(self, i_ids):
-        return self.item2entity_torch[torch.clip(i_ids, 0, len(self.item2entity_torch - 1))]
+        return self.item2entity_torch[torch.clip(i_ids, 0, len(self.item2entity_torch) - 1)]
 
     def get_multi_item_emb(self, ids):
         e_ids = self.padding_items(ids)
@@ -427,7 +427,7 @@ def load_model_from_transe(
         for item_id, item in enumerate(item_ids)
     }
     model = THWADModel(
-        item2entity=item2entity,
+        item2entity=item2entity if pretrained else {0: 0},
         id2entity=transe.graph.id2entity,
         rel2id=transe.graph.id2relation,
         embedding_size=embedding_size,

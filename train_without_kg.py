@@ -10,22 +10,23 @@ import wandb
 
 wandb.init(
     project="dream-entiry-recommendation", 
-    name=f'without kg',
+    name=f'TAD',
     config={
-        'margin': .5,
-        'norm_lambda': .1,
+        'margin': .25,
+        'norm_lambda': 1.,
         'clipping_max_value': 5.,
-        'model_target': 1.,
+        'model_target': .5,
         'kg_lambda': .1,
-        'train_batch_size': 64,
+        'train_batch_size': 256,
         'val_batch_size': 2,
-        'max_epochs': 300,
+        'max_epochs': 200,
         'metric_tolerance': .005,
-        'eraly_stopping': 10,
+        'eraly_stopping': 15,
         'lr': .01,
         'prev_count': 5,
         'use_st_gumbel': False,
         'l1_flag': True,
+        'dataset': config['dataset']['postprocess']['train'],
     },
 )
 
@@ -73,6 +74,7 @@ def optimized_transe_load():
         transe,
         id2items,
         prev_items_total=PREV_CNT,
+        pretrained=False,
         use_st_gumbel=wandb.config['use_st_gumbel'],
         l1_flag=wandb.config['l1_flag'],
     ), transe.graph
