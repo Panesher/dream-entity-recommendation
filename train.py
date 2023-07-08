@@ -10,7 +10,7 @@ import wandb
 
 wandb.init(
     project="dream-entiry-recommendation", 
-    name=f'Topical-Chat',
+    name=f'With mutable prev count third step',
     config={
         'margin': .5,
         'norm_lambda': 1.,
@@ -18,14 +18,15 @@ wandb.init(
         'model_target': .5,
         'kg_lambda': .1,
         'train_batch_size': 256,
-        'val_batch_size': 2,
+        'val_batch_size': 1,
         'max_epochs': 15,
-        'metric_tolerance': .005,
+        'metric_tolerance': .01,
         'eraly_stopping': 10,
         'lr': .01,
         'prev_count': 5,
         'use_st_gumbel': False,
         'l1_flag': True,
+        'use_item_emb': True,
         'dataset': config['dataset']['postprocess']['train'],
     },
 )
@@ -79,10 +80,13 @@ def optimized_transe_load():
         prev_items_total=PREV_CNT,
         use_st_gumbel=wandb.config['use_st_gumbel'],
         l1_flag=wandb.config['l1_flag'],
+        use_item_emb=wandb.config['use_item_emb'],
     ), transe.graph
 
 
 model, graph = optimized_transe_load()
+if 'model' in config and 'best_path' in config['model']:
+    model.load(config['model']['best_path'])
 
 print('model loaded')
 
@@ -105,6 +109,9 @@ trainer = THSWADTrainer(
     eraly_stopping=wandb.config['eraly_stopping'],
     verbose=True,
 )
+
+if 'model' in config and 'best_path' in config['model']:
+    trainer.test(val_loader)
 
 print('start training')
 trainer.train(train_loader, wandb.config['max_epochs'], val_dataloader=val_loader)

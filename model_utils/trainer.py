@@ -1,14 +1,15 @@
 import torch
 from torch import nn
-import numpy as np
-from torch.utils.data import DataLoader
-from model_utils.thswad import THWADModel, to_gpu
 import wandb
-from torch.autograd import Variable as V
 from tqdm import tqdm
 from pathlib import Path
-import third_party.joint_kg_recommender.jTransUP.utils.loss as loss
 import logging
+
+from utils import loss
+from utils.misc import to_gpu
+
+from model_utils.thswad import THWADModel
+
 
 LOGGER = logging.getLogger('trainer_logger')
 logging.basicConfig(level=logging.INFO)
@@ -159,8 +160,8 @@ class THSWADTrainer(BaseTrainer):
         neg_score = self.model((prevs, neg_items), None, is_rec=True)
 
         # Calculate loss.
-        losses = loss.bprLoss(pos_score, neg_score, target=self.model_target)
-        losses += loss.orthogonalLoss(self.model.pref_embeddings.weight, self.model.pref_norm_embeddings.weight)
+        losses = loss.bpr_loss(pos_score, neg_score, target=self.model_target)
+        losses += loss.orthogonal_loss(self.model.pref_embeddings.weight, self.model.pref_norm_embeddings.weight)
         return losses
 
     def _train_step(self, batch_idx, batch):
@@ -176,14 +177,14 @@ class THSWADTrainer(BaseTrainer):
             neg_score = self.model(None, (nh, r, nt), is_rec=False)
 
             # Calculate loss.
-            losses = loss.marginLoss()(pos_score, neg_score, self.margin)
+            losses = loss.margin_loss()(pos_score, neg_score, self.margin)
 
             ent_embeddings = self.model.ent_embeddings(torch.cat([h, t, nh, nt]))
             rel_embeddings = self.model.rel_embeddings(r) * 2
             norm_embeddings = self.model.norm_embeddings(r) * 2
-            losses += loss.orthogonalLoss(rel_embeddings, norm_embeddings)
+            losses += loss.orthogonal_loss(rel_embeddings, norm_embeddings)
 
-            losses = losses + self.norm_lambda * (loss.normLoss(ent_embeddings) + loss.normLoss(rel_embeddings))
+            losses = losses + self.norm_lambda * (loss.norm_loss(ent_embeddings) + loss.norm_loss(rel_embeddings))
             losses = self.kg_lambda * losses
 
         # Backward pass.

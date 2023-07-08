@@ -3,6 +3,9 @@ entity_linking:
 entity_detection:
     url: http://0.0.0.0:8103/respond
 
+model:
+    best_path: model_checkpoints/model_best_40.pt
+    light_path: model_checkpoints/model_light.pt
 wikidata:
     transe: trans_model_weight/transe_wikidata5m.pkl
     dataset:
@@ -10,12 +13,22 @@ wikidata:
         val: dataset/wikidata5m_transductive_valid.txt
         test: dataset/wikidata5m_transductive_test.txt
 dataset:
-    name: daily_dialog
+    name: merged
     limit:
         train: -1
         validation: -1
         test: -1
     postprocess:
-        train: dataset/daily_dialog/el_single_results_train.json
+        train: dataset/merged/el_single_results_train.json
+        val: dataset/merged/el_single_results_validation.json
+        test: dataset/merged/el_single_results_test.json
+    merge_paths:
+      - train: dataset/daily_dialog/el_single_results_train.json
         val: dataset/daily_dialog/el_single_results_validation.json
         test: dataset/daily_dialog/el_single_results_test.json
+      - train: dataset/topical-chat/el_single_results_train.json
+        val: dataset/topical-chat/el_single_results_validation.json
+        test: dataset/topical-chat/el_single_results_test.json
+      - train: dataset/dream_vs_chatgpt/el_single_results_train.json
+        val: dataset/dream_vs_chatgpt/el_single_results_validation.json
+        test: dataset/dream_vs_chatgpt/el_single_results_test.json
