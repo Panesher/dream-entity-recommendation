@@ -537,6 +537,8 @@ class THWADLight(THWADBase):
 
         return self.item_embeddings(ids)
 
+    def get_padding_value(self):
+        return self.item_total - 1
 
     def get_multi_item_emb(self, ids):
         return self.prev_meaner @ self.item_embeddings(ids)

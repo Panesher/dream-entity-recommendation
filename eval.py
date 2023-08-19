@@ -2,7 +2,7 @@ from config import config
 import pickle
 import json
 from model_utils.thswad import load_model_from_transe, load_light_model, load_light_model_from_path
-from model_utils.trainer import THSWADTrainer
+from model_utils.trainer import THSWADTrainer, BaseTrainer
 from utils.ds import *
 from utils.lrs import get_epoch_lr
 from torch.utils.data import DataLoader
